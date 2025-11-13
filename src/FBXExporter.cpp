@@ -726,6 +726,20 @@ void FBXExporter::ExportAnimationClip(const AnimationClip& clip)
         FbxAnimCurve* curveSZ = boneNode->LclScaling.GetCurve(animLayer, FBXSDK_CURVENODE_COMPONENT_Z, true);
 
         // ====================================================================
+        // OPTIMIZACIÓN: Iniciar modificación de TODAS las curvas una sola vez
+        // ====================================================================
+        // Esto es mucho más eficiente que llamar Begin/End para cada keyframe
+        curveTX->KeyModifyBegin();
+        curveTY->KeyModifyBegin();
+        curveTZ->KeyModifyBegin();
+        curveRX->KeyModifyBegin();
+        curveRY->KeyModifyBegin();
+        curveRZ->KeyModifyBegin();
+        curveSX->KeyModifyBegin();
+        curveSY->KeyModifyBegin();
+        curveSZ->KeyModifyBegin();
+
+        // ====================================================================
         // Agregar keyframes a las curvas
         // ====================================================================
         // Iterar sobre cada keyframe en este track
@@ -762,22 +776,16 @@ void FBXExporter::ExportAnimationClip(const AnimationClip& clip)
             // ================================================================
 
             // Keyframe para Translation X
-            curveTX->KeyModifyBegin();                      // Iniciar modificación de curva
-            int keyIndexTX = curveTX->KeyAdd(keyTime);      // Agregar keyframe en este tiempo
-            curveTX->KeySet(keyIndexTX, keyTime, (float)pos[0]);  // Establecer valor X
-            curveTX->KeyModifyEnd();                        // Finalizar modificación
+            int keyIndexTX = curveTX->KeyAdd(keyTime);
+            curveTX->KeySet(keyIndexTX, keyTime, (float)pos[0]);
 
             // Keyframe para Translation Y
-            curveTY->KeyModifyBegin();
             int keyIndexTY = curveTY->KeyAdd(keyTime);
-            curveTY->KeySet(keyIndexTY, keyTime, (float)pos[1]);  // Valor Y
-            curveTY->KeyModifyEnd();
+            curveTY->KeySet(keyIndexTY, keyTime, (float)pos[1]);
 
             // Keyframe para Translation Z
-            curveTZ->KeyModifyBegin();
             int keyIndexTZ = curveTZ->KeyAdd(keyTime);
-            curveTZ->KeySet(keyIndexTZ, keyTime, (float)pos[2]);  // Valor Z (ya invertido)
-            curveTZ->KeyModifyEnd();
+            curveTZ->KeySet(keyIndexTZ, keyTime, (float)pos[2]);
 
             // ================================================================
             // AGREGAR KEYFRAMES DE ROTACIÓN (RX, RY, RZ)
@@ -788,41 +796,42 @@ void FBXExporter::ExportAnimationClip(const AnimationClip& clip)
             const double RAD_TO_DEG = 180.0 / 3.14159265358979323846;
 
             // Keyframe para Rotation X (en grados)
-            curveRX->KeyModifyBegin();
             int keyIndexRX = curveRX->KeyAdd(keyTime);
             curveRX->KeySet(keyIndexRX, keyTime, (float)(euler[0] * RAD_TO_DEG));
-            curveRX->KeyModifyEnd();
 
             // Keyframe para Rotation Y (en grados)
-            curveRY->KeyModifyBegin();
             int keyIndexRY = curveRY->KeyAdd(keyTime);
             curveRY->KeySet(keyIndexRY, keyTime, (float)(euler[1] * RAD_TO_DEG));
-            curveRY->KeyModifyEnd();
 
             // Keyframe para Rotation Z (en grados)
-            curveRZ->KeyModifyBegin();
             int keyIndexRZ = curveRZ->KeyAdd(keyTime);
             curveRZ->KeySet(keyIndexRZ, keyTime, (float)(euler[2] * RAD_TO_DEG));
-            curveRZ->KeyModifyEnd();
 
             // ================================================================
             // AGREGAR KEYFRAMES DE ESCALA (SX, SY, SZ)
             // ================================================================
-            curveSX->KeyModifyBegin();
             int keyIndexSX = curveSX->KeyAdd(keyTime);
             curveSX->KeySet(keyIndexSX, keyTime, (float)scale[0]);
-            curveSX->KeyModifyEnd();
 
-            curveSY->KeyModifyBegin();
             int keyIndexSY = curveSY->KeyAdd(keyTime);
             curveSY->KeySet(keyIndexSY, keyTime, (float)scale[1]);
-            curveSY->KeyModifyEnd();
 
-            curveSZ->KeyModifyBegin();
             int keyIndexSZ = curveSZ->KeyAdd(keyTime);
             curveSZ->KeySet(keyIndexSZ, keyTime, (float)scale[2]);
-            curveSZ->KeyModifyEnd();
         }
+
+        // ====================================================================
+        // OPTIMIZACIÓN: Finalizar modificación de TODAS las curvas una vez
+        // ====================================================================
+        curveTX->KeyModifyEnd();
+        curveTY->KeyModifyEnd();
+        curveTZ->KeyModifyEnd();
+        curveRX->KeyModifyEnd();
+        curveRY->KeyModifyEnd();
+        curveRZ->KeyModifyEnd();
+        curveSX->KeyModifyEnd();
+        curveSY->KeyModifyEnd();
+        curveSZ->KeyModifyEnd();
     }
 }
 

@@ -1,6 +1,19 @@
 #include "XFileParser.h"
 
 // ============================================================================
+// GUID Definitions para DirectX Animation Interfaces
+// ============================================================================
+// IID_ID3DXKeyframedAnimationSet no está exportado por d3dx9.lib en todas las versiones
+// Por lo tanto, lo definimos manualmente aquí
+// Este GUID permite hacer QueryInterface a ID3DXKeyframedAnimationSet
+// ============================================================================
+
+// Definición del GUID para ID3DXKeyframedAnimationSet
+// Fuente: Microsoft DirectX SDK (June 2010) - d3dx9anim.h
+static const GUID IID_ID3DXKeyframedAnimationSet =
+{ 0xfa4e8e3a, 0x9786, 0x407d, { 0x8b, 0x4c, 0x59, 0x95, 0x89, 0x37, 0x64, 0xaf } };
+
+// ============================================================================
 // Constructor / Destructor
 // ============================================================================
 
@@ -495,9 +508,23 @@ void XFileParser::LoadAnimations(ID3DXAnimationController* animController, Scene
     // Obtener número de animation sets (clips) en el controlador
     UINT numAnimSets = animController->GetNumAnimationSets();
 
+    // ========================================================================
+    // LOGGING DE PROGRESO PARA GRANDES CANTIDADES DE ANIMACIONES
+    // ========================================================================
+    if (numAnimSets > 10)
+    {
+        cout << "Loading " << numAnimSets << " animation(s)... This may take a while.\n";
+    }
+
     // Iterar sobre cada animation set
     for (UINT iSet = 0; iSet < numAnimSets; iSet++)
     {
+        // Mostrar progreso cada 10 animaciones
+        if (numAnimSets > 10 && iSet % 10 == 0)
+        {
+            cout << "Progress: " << iSet << "/" << numAnimSets << " animations loaded...\n";
+        }
+
         LPD3DXANIMATIONSET pAnimSet;
         animController->GetAnimationSet(iSet, &pAnimSet);
 
@@ -529,6 +556,15 @@ void XFileParser::LoadAnimations(ID3DXAnimationController* animController, Scene
                 // Obtener nombre del hueso que esta animación controla
                 const char* boneName = nullptr;
                 pKeyframedSet->GetAnimationNameByIndex(iAnim, &boneName);
+
+                // ============================================================
+                // VALIDACIÓN: Verificar que boneName no sea nullptr
+                // ============================================================
+                if (boneName == nullptr || strlen(boneName) == 0)
+                {
+                    continue;  // Saltar este track si no tiene nombre válido
+                }
+
                 track.boneName = string(boneName);
 
                 // ================================================================
@@ -539,6 +575,9 @@ void XFileParser::LoadAnimations(ID3DXAnimationController* animController, Scene
                 {
                     D3DXKEY_QUATERNION* pRotKeys = new D3DXKEY_QUATERNION[numRotKeys];
                     pKeyframedSet->GetRotationKeys(iAnim, pRotKeys);
+
+                    // Pre-reservar memoria para eficiencia
+                    track.keys.reserve(numRotKeys);
 
                     // Crear keyframe para cada rotación
                     for (UINT iKey = 0; iKey < numRotKeys; iKey++)
@@ -559,15 +598,18 @@ void XFileParser::LoadAnimations(ID3DXAnimationController* animController, Scene
                 // ================================================================
                 // EXTRACCIÓN DE KEYFRAMES DE TRASLACIÓN
                 // ================================================================
+                // OPTIMIZADO: Usar map temporal para fusión O(log n) en vez de O(n²)
+                // ================================================================
                 UINT numPosKeys = pKeyframedSet->GetNumTranslationKeys(iAnim);
                 if (numPosKeys > 0)
                 {
                     D3DXKEY_VECTOR3* pPosKeys = new D3DXKEY_VECTOR3[numPosKeys];
                     pKeyframedSet->GetTranslationKeys(iAnim, pPosKeys);
 
-                    // Si no hay keyframes de rotación, crear nuevos keyframes
+                    // Si no hay keyframes de rotación, crear nuevos keyframes directamente
                     if (track.keys.empty())
                     {
+                        track.keys.reserve(numPosKeys);  // Pre-reservar memoria
                         for (UINT iKey = 0; iKey < numPosKeys; iKey++)
                         {
                             AnimationKey key;
@@ -580,26 +622,27 @@ void XFileParser::LoadAnimations(ID3DXAnimationController* animController, Scene
                     }
                     else
                     {
-                        // Fusionar con keyframes existentes
-                        // Buscar keyframes con el mismo tiempo y actualizar translation
+                        // Crear mapa temporal para búsqueda rápida O(log n)
+                        map<double, size_t> timeToIndex;
+                        for (size_t i = 0; i < track.keys.size(); i++)
+                        {
+                            timeToIndex[track.keys[i].time] = i;
+                        }
+
+                        // Fusionar con keyframes existentes usando el mapa
                         for (UINT iKey = 0; iKey < numPosKeys; iKey++)
                         {
                             double time = pPosKeys[iKey].Time;
-                            bool found = false;
+                            auto it = timeToIndex.find(time);
 
-                            for (auto& existingKey : track.keys)
+                            if (it != timeToIndex.end())
                             {
-                                if (fabs(existingKey.time - time) < EPSILON)
-                                {
-                                    existingKey.translation = pPosKeys[iKey].Value;
-                                    found = true;
-                                    break;
-                                }
+                                // Actualizar keyframe existente
+                                track.keys[it->second].translation = pPosKeys[iKey].Value;
                             }
-
-                            // Si no existe, crear nuevo keyframe
-                            if (!found)
+                            else
                             {
+                                // Crear nuevo keyframe
                                 AnimationKey key;
                                 key.time = time;
                                 key.translation = pPosKeys[iKey].Value;
@@ -615,15 +658,18 @@ void XFileParser::LoadAnimations(ID3DXAnimationController* animController, Scene
                 // ================================================================
                 // EXTRACCIÓN DE KEYFRAMES DE ESCALA
                 // ================================================================
+                // OPTIMIZADO: Usar map temporal para fusión O(log n) en vez de O(n²)
+                // ================================================================
                 UINT numScaleKeys = pKeyframedSet->GetNumScaleKeys(iAnim);
                 if (numScaleKeys > 0)
                 {
                     D3DXKEY_VECTOR3* pScaleKeys = new D3DXKEY_VECTOR3[numScaleKeys];
                     pKeyframedSet->GetScaleKeys(iAnim, pScaleKeys);
 
-                    // Si no hay keyframes, crear nuevos
+                    // Si no hay keyframes, crear nuevos directamente
                     if (track.keys.empty())
                     {
+                        track.keys.reserve(numScaleKeys);  // Pre-reservar memoria
                         for (UINT iKey = 0; iKey < numScaleKeys; iKey++)
                         {
                             AnimationKey key;
@@ -636,25 +682,27 @@ void XFileParser::LoadAnimations(ID3DXAnimationController* animController, Scene
                     }
                     else
                     {
-                        // Fusionar con keyframes existentes
+                        // Crear mapa temporal para búsqueda rápida O(log n)
+                        map<double, size_t> timeToIndex;
+                        for (size_t i = 0; i < track.keys.size(); i++)
+                        {
+                            timeToIndex[track.keys[i].time] = i;
+                        }
+
+                        // Fusionar con keyframes existentes usando el mapa
                         for (UINT iKey = 0; iKey < numScaleKeys; iKey++)
                         {
                             double time = pScaleKeys[iKey].Time;
-                            bool found = false;
+                            auto it = timeToIndex.find(time);
 
-                            for (auto& existingKey : track.keys)
+                            if (it != timeToIndex.end())
                             {
-                                if (fabs(existingKey.time - time) < EPSILON)
-                                {
-                                    existingKey.scale = pScaleKeys[iKey].Value;
-                                    found = true;
-                                    break;
-                                }
+                                // Actualizar keyframe existente
+                                track.keys[it->second].scale = pScaleKeys[iKey].Value;
                             }
-
-                            // Si no existe, crear nuevo keyframe
-                            if (!found)
+                            else
                             {
+                                // Crear nuevo keyframe
                                 AnimationKey key;
                                 key.time = time;
                                 key.scale = pScaleKeys[iKey].Value;
@@ -670,6 +718,16 @@ void XFileParser::LoadAnimations(ID3DXAnimationController* animController, Scene
                 // Solo agregar el track si tiene keyframes
                 if (!track.keys.empty())
                 {
+                    // ============================================================
+                    // WARNING: Detectar cantidades anormales de keyframes
+                    // ============================================================
+                    if (track.keys.size() > 10000)
+                    {
+                        cout << "  WARNING: Track '" << track.boneName
+                             << "' has " << track.keys.size()
+                             << " keyframes (unusually high)\n";
+                    }
+
                     clip.tracks.push_back(track);
                 }
             }
@@ -682,6 +740,12 @@ void XFileParser::LoadAnimations(ID3DXAnimationController* animController, Scene
         sceneData.animations.push_back(clip);
 
         pAnimSet->Release();
+    }
+
+    // Logging final de progreso
+    if (numAnimSets > 10)
+    {
+        cout << "Progress: " << numAnimSets << "/" << numAnimSets << " animations loaded successfully!\n";
     }
 }
 
