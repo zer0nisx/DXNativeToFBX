@@ -510,27 +510,18 @@ void XFileParser::LoadAnimations(ID3DXAnimationController* animController, Scene
         clip.ticksPerSecond = pAnimSet->GetPeriodicPosition(1.0) / pAnimSet->GetPeriod();  // FPS
 
         // ========================================================================
-        // ⚠️ PROBLEMA CRÍTICO: NO SE EXTRAEN LOS KEYFRAMES
+        // EXTRACCIÓN DE KEYFRAMES (IMPLEMENTACIÓN COMPLETA)
         // ========================================================================
-        // TODO: Extraer keyframes de animación
-        //
-        // Para implementar esto correctamente, se debe:
-        // 1. Hacer QueryInterface a ID3DXKeyframedAnimationSet
-        // 2. Obtener número de animations (tracks por hueso)
-        // 3. Para cada animation:
-        //    - GetAnimationNameByIndex() para obtener nombre del hueso
-        //    - GetNumRotationKeys(), GetRotationKeys() para keyframes de rotación
-        //    - GetNumTranslationKeys(), GetTranslationKeys() para keyframes de posición
-        //    - GetNumScaleKeys(), GetScaleKeys() para keyframes de escala
-        // 4. Crear AnimationTrack para cada hueso y llenar con AnimationKeys
-        //
-        // CÓDIGO DE EJEMPLO:
-        /*
+        // Se hace QueryInterface a ID3DXKeyframedAnimationSet para obtener
+        // acceso a los keyframes individuales de cada track de animación.
+        // ========================================================================
+
         ID3DXKeyframedAnimationSet* pKeyframedSet = nullptr;
         if (SUCCEEDED(pAnimSet->QueryInterface(IID_ID3DXKeyframedAnimationSet, (void**)&pKeyframedSet)))
         {
             UINT numAnimations = pKeyframedSet->GetNumAnimations();
 
+            // Iterar sobre cada animation (track por hueso)
             for (UINT iAnim = 0; iAnim < numAnimations; iAnim++)
             {
                 AnimationTrack track;
@@ -540,35 +531,152 @@ void XFileParser::LoadAnimations(ID3DXAnimationController* animController, Scene
                 pKeyframedSet->GetAnimationNameByIndex(iAnim, &boneName);
                 track.boneName = string(boneName);
 
-                // Extraer keyframes de rotación
+                // ================================================================
+                // EXTRACCIÓN DE KEYFRAMES DE ROTACIÓN
+                // ================================================================
                 UINT numRotKeys = pKeyframedSet->GetNumRotationKeys(iAnim);
                 if (numRotKeys > 0)
                 {
                     D3DXKEY_QUATERNION* pRotKeys = new D3DXKEY_QUATERNION[numRotKeys];
                     pKeyframedSet->GetRotationKeys(iAnim, pRotKeys);
 
+                    // Crear keyframe para cada rotación
                     for (UINT iKey = 0; iKey < numRotKeys; iKey++)
                     {
                         AnimationKey key;
                         key.time = pRotKeys[iKey].Time;
                         key.rotation = pRotKeys[iKey].Value;
-                        // ... agregar a track
+
+                        // Inicializar translation y scale por defecto
+                        key.translation = D3DXVECTOR3(0, 0, 0);
+                        key.scale = D3DXVECTOR3(1, 1, 1);
+
+                        track.keys.push_back(key);
                     }
                     delete[] pRotKeys;
                 }
 
-                // Repetir para Translation y Scale...
+                // ================================================================
+                // EXTRACCIÓN DE KEYFRAMES DE TRASLACIÓN
+                // ================================================================
+                UINT numPosKeys = pKeyframedSet->GetNumTranslationKeys(iAnim);
+                if (numPosKeys > 0)
+                {
+                    D3DXKEY_VECTOR3* pPosKeys = new D3DXKEY_VECTOR3[numPosKeys];
+                    pKeyframedSet->GetTranslationKeys(iAnim, pPosKeys);
 
-                clip.tracks.push_back(track);
+                    // Si no hay keyframes de rotación, crear nuevos keyframes
+                    if (track.keys.empty())
+                    {
+                        for (UINT iKey = 0; iKey < numPosKeys; iKey++)
+                        {
+                            AnimationKey key;
+                            key.time = pPosKeys[iKey].Time;
+                            key.translation = pPosKeys[iKey].Value;
+                            key.rotation = D3DXQUATERNION(0, 0, 0, 1);
+                            key.scale = D3DXVECTOR3(1, 1, 1);
+                            track.keys.push_back(key);
+                        }
+                    }
+                    else
+                    {
+                        // Fusionar con keyframes existentes
+                        // Buscar keyframes con el mismo tiempo y actualizar translation
+                        for (UINT iKey = 0; iKey < numPosKeys; iKey++)
+                        {
+                            double time = pPosKeys[iKey].Time;
+                            bool found = false;
+
+                            for (auto& existingKey : track.keys)
+                            {
+                                if (fabs(existingKey.time - time) < EPSILON)
+                                {
+                                    existingKey.translation = pPosKeys[iKey].Value;
+                                    found = true;
+                                    break;
+                                }
+                            }
+
+                            // Si no existe, crear nuevo keyframe
+                            if (!found)
+                            {
+                                AnimationKey key;
+                                key.time = time;
+                                key.translation = pPosKeys[iKey].Value;
+                                key.rotation = D3DXQUATERNION(0, 0, 0, 1);
+                                key.scale = D3DXVECTOR3(1, 1, 1);
+                                track.keys.push_back(key);
+                            }
+                        }
+                    }
+                    delete[] pPosKeys;
+                }
+
+                // ================================================================
+                // EXTRACCIÓN DE KEYFRAMES DE ESCALA
+                // ================================================================
+                UINT numScaleKeys = pKeyframedSet->GetNumScaleKeys(iAnim);
+                if (numScaleKeys > 0)
+                {
+                    D3DXKEY_VECTOR3* pScaleKeys = new D3DXKEY_VECTOR3[numScaleKeys];
+                    pKeyframedSet->GetScaleKeys(iAnim, pScaleKeys);
+
+                    // Si no hay keyframes, crear nuevos
+                    if (track.keys.empty())
+                    {
+                        for (UINT iKey = 0; iKey < numScaleKeys; iKey++)
+                        {
+                            AnimationKey key;
+                            key.time = pScaleKeys[iKey].Time;
+                            key.scale = pScaleKeys[iKey].Value;
+                            key.translation = D3DXVECTOR3(0, 0, 0);
+                            key.rotation = D3DXQUATERNION(0, 0, 0, 1);
+                            track.keys.push_back(key);
+                        }
+                    }
+                    else
+                    {
+                        // Fusionar con keyframes existentes
+                        for (UINT iKey = 0; iKey < numScaleKeys; iKey++)
+                        {
+                            double time = pScaleKeys[iKey].Time;
+                            bool found = false;
+
+                            for (auto& existingKey : track.keys)
+                            {
+                                if (fabs(existingKey.time - time) < EPSILON)
+                                {
+                                    existingKey.scale = pScaleKeys[iKey].Value;
+                                    found = true;
+                                    break;
+                                }
+                            }
+
+                            // Si no existe, crear nuevo keyframe
+                            if (!found)
+                            {
+                                AnimationKey key;
+                                key.time = time;
+                                key.scale = pScaleKeys[iKey].Value;
+                                key.translation = D3DXVECTOR3(0, 0, 0);
+                                key.rotation = D3DXQUATERNION(0, 0, 0, 1);
+                                track.keys.push_back(key);
+                            }
+                        }
+                    }
+                    delete[] pScaleKeys;
+                }
+
+                // Solo agregar el track si tiene keyframes
+                if (!track.keys.empty())
+                {
+                    clip.tracks.push_back(track);
+                }
             }
 
             pKeyframedSet->Release();
         }
-        */
         // ========================================================================
-
-        // Por ahora dejamos las tracks vacías (esto significa que no habrá animación real)
-        // Las animaciones se detectarán pero los archivos FBX estarán sin keyframes
 
         // Agregar clip al scene data (aunque esté incompleto)
         sceneData.animations.push_back(clip);
