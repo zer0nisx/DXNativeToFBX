@@ -180,6 +180,15 @@ private:
         FbxNode* meshNode);
 
     /**
+     * Crear bind pose para skinned mesh
+     * @param meshData Mesh con pesos
+     * @param meshNode Nodo del mesh
+     */
+    void CreateBindPose(
+        MeshData* meshData,
+        FbxNode* meshNode);
+
+    /**
      * Exportar animaciones
      * @param animations Lista de animaciones
      */

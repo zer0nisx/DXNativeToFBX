@@ -31,6 +31,7 @@ void PrintUsage()
     cout << "  --export-textures                  Copy textures to output folder\n";
     cout << "  --no-export-textures               Don't copy textures (default)\n";
     cout << "  --triangulate                      Triangulate polygons (default: on)\n";
+    cout << "  --fps <30|60>                      Target FPS for animations (default: 30)\n";
     cout << "  --verbose                          Show detailed information\n";
     cout << "  --help                             Show this help message\n";
     cout << "\nEXAMPLES:\n";
@@ -106,6 +107,16 @@ bool ParseArguments(int argc, char* argv[], ConversionOptions& options)
         else if (arg == "--triangulate")
         {
             options.triangulate = true;
+        }
+        else if (arg == "--fps" && i + 1 < argc)
+        {
+            options.targetFPS = atof(argv[++i]);
+            // Validar FPS razonable
+            if (options.targetFPS < 1.0 || options.targetFPS > 120.0)
+            {
+                Utils::LogWarning("Invalid FPS value, using default 30 FPS");
+                options.targetFPS = 30.0;
+            }
         }
         else if (arg == "--verbose" || arg == "-v")
         {

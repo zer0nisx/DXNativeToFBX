@@ -70,6 +70,10 @@ struct ConversionOptions
 
     int fbxVersion = -1; // FBX version (-1 = auto-detect, or use FbxIOPluginRegistry format ID)
 
+	// Opciones de animación
+	double targetFPS = 30.0; // FPS objetivo para la exportación (30 o 60 recomendado)
+	bool resampleAnimation = true; // Resamplear animación al FPS objetivo
+
 	ConversionOptions() {}
 };
 
@@ -309,14 +313,14 @@ namespace Utils
 
         // Crear directorio recursivamente
         string path = dirpath;
-        
+
         // Normalizar separadores
         for (char& c : path)
         {
             if (c == '/')
                 c = '\\';
         }
-        
+
         // Asegurar que termine con separador
         if (path.back() != '\\')
             path += "\\";

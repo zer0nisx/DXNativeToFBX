@@ -534,7 +534,23 @@ void XFileParser::LoadAnimations(ID3DXAnimationController* animController, Scene
         // Extraer metadatos básicos
         clip.name = string(pAnimSet->GetName());           // Nombre del clip (ej: "Walk", "Run")
         clip.duration = pAnimSet->GetPeriod();             // Duración en segundos
-        clip.ticksPerSecond = pAnimSet->GetPeriodicPosition(1.0) / pAnimSet->GetPeriod();  // FPS
+
+        // ====================================================================
+        // CORRECCIÓN CRÍTICA: Cálculo correcto de TicksPerSecond
+        // ====================================================================
+        // GetPeriodicPosition(time) devuelve la posición en ticks para un tiempo dado
+        // Para obtener TPS: ticks_at_1_second / 1.0 segundo
+        // Si la animación tiene duración menor a 1 segundo, usamos el periodo completo
+        double referenceTime = (clip.duration >= 1.0) ? 1.0 : clip.duration;
+        double ticksAtReference = pAnimSet->GetPeriodicPosition(referenceTime);
+        clip.ticksPerSecond = ticksAtReference / referenceTime;
+
+        if (m_Options.verbose)
+        {
+            cout << "  Animation: " << clip.name
+                 << ", Duration: " << clip.duration << "s"
+                 << ", TPS: " << clip.ticksPerSecond << "\n";
+        }
 
         // ========================================================================
         // EXTRACCIÓN DE KEYFRAMES (IMPLEMENTACIÓN COMPLETA)
@@ -583,7 +599,8 @@ void XFileParser::LoadAnimations(ID3DXAnimationController* animController, Scene
                     for (UINT iKey = 0; iKey < numRotKeys; iKey++)
                     {
                         AnimationKey key;
-                        key.time = pRotKeys[iKey].Time;
+                        // CORRECCIÓN: Convertir ticks a segundos usando ticksPerSecond
+                        key.time = pRotKeys[iKey].Time / clip.ticksPerSecond;
                         key.rotation = pRotKeys[iKey].Value;
 
                         // Inicializar translation y scale por defecto
@@ -613,7 +630,8 @@ void XFileParser::LoadAnimations(ID3DXAnimationController* animController, Scene
                         for (UINT iKey = 0; iKey < numPosKeys; iKey++)
                         {
                             AnimationKey key;
-                            key.time = pPosKeys[iKey].Time;
+                            // CORRECCIÓN: Convertir ticks a segundos
+                            key.time = pPosKeys[iKey].Time / clip.ticksPerSecond;
                             key.translation = pPosKeys[iKey].Value;
                             key.rotation = D3DXQUATERNION(0, 0, 0, 1);
                             key.scale = D3DXVECTOR3(1, 1, 1);
@@ -632,7 +650,8 @@ void XFileParser::LoadAnimations(ID3DXAnimationController* animController, Scene
                         // Fusionar con keyframes existentes usando el mapa
                         for (UINT iKey = 0; iKey < numPosKeys; iKey++)
                         {
-                            double time = pPosKeys[iKey].Time;
+                            // CORRECCIÓN: Convertir ticks a segundos
+                            double time = pPosKeys[iKey].Time / clip.ticksPerSecond;
                             auto it = timeToIndex.find(time);
 
                             if (it != timeToIndex.end())
@@ -673,7 +692,8 @@ void XFileParser::LoadAnimations(ID3DXAnimationController* animController, Scene
                         for (UINT iKey = 0; iKey < numScaleKeys; iKey++)
                         {
                             AnimationKey key;
-                            key.time = pScaleKeys[iKey].Time;
+                            // CORRECCIÓN: Convertir ticks a segundos
+                            key.time = pScaleKeys[iKey].Time / clip.ticksPerSecond;
                             key.scale = pScaleKeys[iKey].Value;
                             key.translation = D3DXVECTOR3(0, 0, 0);
                             key.rotation = D3DXQUATERNION(0, 0, 0, 1);
@@ -692,7 +712,8 @@ void XFileParser::LoadAnimations(ID3DXAnimationController* animController, Scene
                         // Fusionar con keyframes existentes usando el mapa
                         for (UINT iKey = 0; iKey < numScaleKeys; iKey++)
                         {
-                            double time = pScaleKeys[iKey].Time;
+                            // CORRECCIÓN: Convertir ticks a segundos
+                            double time = pScaleKeys[iKey].Time / clip.ticksPerSecond;
                             auto it = timeToIndex.find(time);
 
                             if (it != timeToIndex.end())

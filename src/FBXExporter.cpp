@@ -351,6 +351,9 @@ FbxNode* FBXExporter::ExportMesh(
         // Por ahora, lo dejamos comentado
         // ExportSkeleton(meshData, meshNode, rootFrame);
         ExportSkinWeights(meshData, fbxMesh, meshNode);
+
+        // CRÍTICO: Crear bind pose para que la deformación funcione correctamente
+        CreateBindPose(meshData, meshNode);
     }
 
     // Agregar mesh node como hijo del frame
@@ -582,21 +585,107 @@ void FBXExporter::ExportSkinWeights(
             }
         }
 
-        // Configurar matrices de transformación
-        FbxAMatrix linkMatrix = boneNode->EvaluateGlobalTransform();
+        // ====================================================================
+        // CONFIGURACIÓN CRÍTICA: Matrices de transformación del cluster
+        // ====================================================================
+        // Para que el skinning funcione correctamente, debemos configurar:
+        // 1. TransformMatrix: Matriz global del mesh en bind pose
+        // 2. TransformLinkMatrix: Matriz global del hueso en bind pose
+        //
+        // La relación es: Vertex_Final = Vertex_Mesh * TransformMatrix^-1 *
+        //                                TransformLinkMatrix * BoneAnimation
+        //
+        // La offsetMatrix es la inversa de la matriz global del hueso en bind pose
+        // ====================================================================
+
         FbxAMatrix meshMatrix = meshNode->EvaluateGlobalTransform();
 
-        // Bind pose matrix (offset matrix)
-        FbxAMatrix bindPoseMatrix = MatrixConverter::ConvertMatrix_LH_to_RH(bone.offsetMatrix);
+        // La offsetMatrix de DirectX es: BindPoseMatrix^-1 (inversa de la bind pose)
+        // Necesitamos calcular la BindPoseMatrix (matriz global del hueso en bind pose)
+        // BindPoseMatrix = offsetMatrix^-1
 
-        cluster->SetTransformMatrix(meshMatrix);
-        cluster->SetTransformLinkMatrix(linkMatrix);
+        FbxAMatrix offsetMatrix = MatrixConverter::ConvertMatrix_LH_to_RH(bone.offsetMatrix);
+        FbxAMatrix bindPoseMatrix = offsetMatrix.Inverse();
+
+        // Configurar las matrices del cluster
+        cluster->SetTransformMatrix(meshMatrix);      // Matriz del mesh en bind pose
+        cluster->SetTransformLinkMatrix(bindPoseMatrix);  // Matriz del hueso en bind pose
+
+        if (m_Options.verbose && iBone < 3)  // Solo mostrar los primeros 3 huesos
+        {
+            cout << "  Bone: " << bone.name << " configured with bind pose matrices\n";
+        }
 
         skin->AddCluster(cluster);
     }
 
     // Agregar skin al mesh
     fbxMesh->AddDeformer(skin);
+
+    Utils::Log("Skin weights exported successfully", m_Options.verbose);
+}
+
+// ============================================================================
+// CREACIÓN DE BIND POSE (CRITICAL FOR SKINNED MESHES)
+// ============================================================================
+// FbxPose almacena las posiciones y orientaciones de todos los huesos y el mesh
+// en el momento del binding (cuando se asignaron los skin weights).
+// Sin esto, muchos programas (Maya, 3ds Max, Unity) no deformarán correctamente
+// la mesh durante las animaciones.
+//
+// La bind pose es esencialmente una "fotografía" del estado inicial del skeleton
+// y la mesh antes de aplicar cualquier animación.
+// ============================================================================
+void FBXExporter::CreateBindPose(
+    MeshData* meshData,
+    FbxNode* meshNode)
+{
+    if (!meshData->hasSkinning || meshData->bones.empty())
+        return;
+
+    // Crear FbxPose para almacenar el bind pose
+    FbxPose* bindPose = FbxPose::Create(m_pScene, "BindPose");
+    bindPose->SetIsBindPose(true);  // Marcar como bind pose (no rest pose)
+
+    // ========================================================================
+    // PASO 1: Agregar el nodo del mesh al bind pose
+    // ========================================================================
+    // El mesh debe estar incluido en el bind pose con su matriz global
+    FbxMatrix meshGlobalMatrix = meshNode->EvaluateGlobalTransform();
+    bindPose->Add(meshNode, meshGlobalMatrix);
+
+    // ========================================================================
+    // PASO 2: Agregar todos los huesos al bind pose
+    // ========================================================================
+    // Cada hueso debe tener su matriz global en el momento del binding
+    for (const BoneData& bone : meshData->bones)
+    {
+        // Buscar el nodo del hueso
+        auto it = m_BoneNodeMap.find(bone.name);
+        if (it == m_BoneNodeMap.end())
+            continue;  // Hueso no encontrado, saltar
+
+        FbxNode* boneNode = it->second;
+
+        // Calcular la matriz global del hueso en bind pose
+        // La offsetMatrix es la inversa de esta matriz
+        FbxAMatrix offsetMatrix = MatrixConverter::ConvertMatrix_LH_to_RH(bone.offsetMatrix);
+        FbxAMatrix boneBindPoseMatrix = offsetMatrix.Inverse();
+
+        // Convertir a FbxMatrix (requerido por FbxPose::Add)
+        FbxMatrix boneMatrix = boneBindPoseMatrix;
+
+        // Agregar el hueso al bind pose
+        bindPose->Add(boneNode, boneMatrix);
+    }
+
+    // ========================================================================
+    // PASO 3: Agregar el bind pose a la escena
+    // ========================================================================
+    // Esto permite que FBX exportadores/importadores accedan al bind pose
+    m_pScene->AddPose(bindPose);
+
+    Utils::Log("Bind pose created successfully", m_Options.verbose);
 }
 
 FbxNode* FBXExporter::CreateBone(
@@ -848,6 +937,40 @@ void FBXExporter::SetupSceneProperties()
     sceneInfo->mComment = "Automatically converted using custom converter";
 
     m_pScene->SetSceneInfo(sceneInfo);
+
+    // ========================================================================
+    // CONFIGURAR FRAMERATE (FPS) DE LA ESCENA
+    // ========================================================================
+    // FBX necesita saber el framerate para reproducir correctamente las animaciones
+    // Los programas como Maya, 3ds Max, Unity, Unreal dependen de este valor
+
+    FbxTime::EMode timeMode;
+
+    // Configurar según el FPS objetivo especificado en las opciones
+    if (m_Options.targetFPS >= 59.0 && m_Options.targetFPS <= 61.0)
+    {
+        timeMode = FbxTime::eFrames60;  // 60 FPS
+    }
+    else if (m_Options.targetFPS >= 29.0 && m_Options.targetFPS <= 31.0)
+    {
+        timeMode = FbxTime::eFrames30;  // 30 FPS (más común)
+    }
+    else if (m_Options.targetFPS >= 23.0 && m_Options.targetFPS <= 25.0)
+    {
+        timeMode = FbxTime::eFrames24;  // 24 FPS (cine)
+    }
+    else
+    {
+        timeMode = FbxTime::eFrames30;  // Default a 30 FPS
+    }
+
+    FbxGlobalSettings& globalSettings = m_pScene->GetGlobalSettings();
+    globalSettings.SetTimeMode(timeMode);
+
+    if (m_Options.verbose)
+    {
+        cout << "FBX Scene framerate set to: " << m_Options.targetFPS << " FPS\n";
+    }
 }
 
 void FBXExporter::SetupCoordinateSystem()

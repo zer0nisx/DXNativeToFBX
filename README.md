@@ -101,6 +101,7 @@ XtoFBXConverter.exe --batch input_folder/ output_folder/ --recursive
 --front-axis [X|Y|Z]               # Eje frontal (default: Z)
 --coordinate-system [RH|LH]        # Right/Left handed (default: RH)
 --scale <float>                    # Factor de escala (default: 1.0)
+--fps <30|60>                      # FPS objetivo para animaciones (default: 30)
 --merge-materials                  # Fusionar materiales duplicados
 --triangulate                      # Triangular polígonos
 --export-textures                  # Copiar texturas al directorio de salida
