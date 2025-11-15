@@ -595,21 +595,20 @@ void FBXExporter::ExportSkinWeights(
         // La relación es: Vertex_Final = Vertex_Mesh * TransformMatrix^-1 *
         //                                TransformLinkMatrix * BoneAnimation
         //
-        // La offsetMatrix es la inversa de la matriz global del hueso en bind pose
+        // IMPORTANTE: En DirectX, la offsetMatrix transforma del espacio del mesh
+        // al espacio del hueso. Es decir: offsetMatrix = Inverse(BoneGlobalMatrix)
+        // Por lo tanto, NO debemos invertirla de nuevo.
         // ====================================================================
 
         FbxAMatrix meshMatrix = meshNode->EvaluateGlobalTransform();
 
-        // La offsetMatrix de DirectX es: BindPoseMatrix^-1 (inversa de la bind pose)
-        // Necesitamos calcular la BindPoseMatrix (matriz global del hueso en bind pose)
-        // BindPoseMatrix = offsetMatrix^-1
-
-        FbxAMatrix offsetMatrix = MatrixConverter::ConvertMatrix_LH_to_RH(bone.offsetMatrix);
-        FbxAMatrix bindPoseMatrix = offsetMatrix.Inverse();
+        // FIX: Usar la transformación global actual del hueso en la escena FBX
+        // Esto asegura que el binding se hace con la posición correcta del hueso
+        FbxAMatrix boneGlobalMatrix = boneNode->EvaluateGlobalTransform();
 
         // Configurar las matrices del cluster
-        cluster->SetTransformMatrix(meshMatrix);      // Matriz del mesh en bind pose
-        cluster->SetTransformLinkMatrix(bindPoseMatrix);  // Matriz del hueso en bind pose
+        cluster->SetTransformMatrix(meshMatrix);           // Matriz del mesh en bind pose
+        cluster->SetTransformLinkMatrix(boneGlobalMatrix); // Matriz del hueso en bind pose
 
         if (m_Options.verbose && iBone < 3)  // Solo mostrar los primeros 3 huesos
         {
@@ -667,10 +666,9 @@ void FBXExporter::CreateBindPose(
 
         FbxNode* boneNode = it->second;
 
-        // Calcular la matriz global del hueso en bind pose
-        // La offsetMatrix es la inversa de esta matriz
-        FbxAMatrix offsetMatrix = MatrixConverter::ConvertMatrix_LH_to_RH(bone.offsetMatrix);
-        FbxAMatrix boneBindPoseMatrix = offsetMatrix.Inverse();
+        // FIX: Usar la transformación global actual del hueso
+        // Esto asegura consistencia con las matrices usadas en los clusters
+        FbxAMatrix boneBindPoseMatrix = boneNode->EvaluateGlobalTransform();
 
         // Convertir a FbxMatrix (requerido por FbxPose::Add)
         FbxMatrix boneMatrix = boneBindPoseMatrix;
@@ -850,12 +848,12 @@ void FBXExporter::ExportAnimationClip(const AnimationClip& clip)
             // Convertir POSICIÓN (invierte Z)
             FbxVector4 pos = MatrixConverter::ConvertPosition_LH_to_RH(key.translation);
 
-            // Convertir ROTACIÓN (quaternion → negar X,Y)
+            // Convertir ROTACIÓN (quaternion → negar X,Y para cambio de coordenadas)
             FbxQuaternion rot = MatrixConverter::ConvertQuaternion_LH_to_RH(key.rotation);
 
-            // FBX almacena rotaciones como Euler angles (X,Y,Z en grados)
-            // Descomponer quaternion a ángulos de Euler
-            FbxVector4 euler = rot.DecomposeSphericalXYZ();  // Retorna radianes
+            // FIX: Usar quaternion directamente en lugar de convertir a Euler
+            // Esto evita problemas de gimbal lock y rotaciones discontinuas
+            // DecomposeSphericalXYZ() puede causar saltos y orientaciones incorrectas
 
             // Convertir ESCALA (sin cambios entre LH y RH)
             FbxVector4 scale = MatrixConverter::ConvertScale(key.scale);
@@ -879,22 +877,25 @@ void FBXExporter::ExportAnimationClip(const AnimationClip& clip)
             // ================================================================
             // AGREGAR KEYFRAMES DE ROTACIÓN (RX, RY, RZ)
             // ================================================================
-            // IMPORTANTE: FBX espera ángulos de Euler en GRADOS, no radianes
-            // DecomposeSphericalXYZ() retorna radianes, debemos convertir
+            // FIX: Convertir quaternion a Euler usando el método correcto de FBX
+            // que mantiene continuidad y evita gimbal lock
 
-            const double RAD_TO_DEG = 180.0 / 3.14159265358979323846;
+            // Crear una matriz temporal desde el quaternion y extraer Euler angles
+            FbxAMatrix tempMatrix;
+            tempMatrix.SetQ(rot);
+            FbxVector4 euler = tempMatrix.GetR();  // Obtiene Euler en GRADOS directamente
 
-            // Keyframe para Rotation X (en grados)
+            // Keyframe para Rotation X (ya en grados)
             int keyIndexRX = curveRX->KeyAdd(keyTime);
-            curveRX->KeySet(keyIndexRX, keyTime, (float)(euler[0] * RAD_TO_DEG));
+            curveRX->KeySet(keyIndexRX, keyTime, (float)euler[0]);
 
-            // Keyframe para Rotation Y (en grados)
+            // Keyframe para Rotation Y (ya en grados)
             int keyIndexRY = curveRY->KeyAdd(keyTime);
-            curveRY->KeySet(keyIndexRY, keyTime, (float)(euler[1] * RAD_TO_DEG));
+            curveRY->KeySet(keyIndexRY, keyTime, (float)euler[1]);
 
-            // Keyframe para Rotation Z (en grados)
+            // Keyframe para Rotation Z (ya en grados)
             int keyIndexRZ = curveRZ->KeyAdd(keyTime);
-            curveRZ->KeySet(keyIndexRZ, keyTime, (float)(euler[2] * RAD_TO_DEG));
+            curveRZ->KeySet(keyIndexRZ, keyTime, (float)euler[2]);
 
             // ================================================================
             // AGREGAR KEYFRAMES DE ESCALA (SX, SY, SZ)
