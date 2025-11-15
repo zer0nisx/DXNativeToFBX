@@ -536,14 +536,14 @@ void XFileParser::LoadAnimations(ID3DXAnimationController* animController, Scene
         clip.duration = pAnimSet->GetPeriod();             // Duración en segundos
 
         // ====================================================================
-        // CORRECCIÓN CRÍTICA: Cálculo correcto de TicksPerSecond
+        // FIX: Obtener TicksPerSecond CORRECTAMENTE
         // ====================================================================
-        // GetPeriodicPosition(time) devuelve la posición en ticks para un tiempo dado
-        // Para obtener TPS: ticks_at_1_second / 1.0 segundo
-        // Si la animación tiene duración menor a 1 segundo, usamos el periodo completo
-        double referenceTime = (clip.duration >= 1.0) ? 1.0 : clip.duration;
-        double ticksAtReference = pAnimSet->GetPeriodicPosition(referenceTime);
-        clip.ticksPerSecond = ticksAtReference / referenceTime;
+        // ERROR ANTERIOR: GetPeriodicPosition() NO devuelve ticks
+        // SOLUCIÓN: Usar GetSourceTicksPerSecond() del KeyframedAnimationSet
+        // ====================================================================
+
+        // Valor por defecto de DirectX (estándar)
+        clip.ticksPerSecond = 4800.0;
 
         if (m_Options.verbose)
         {
@@ -562,6 +562,16 @@ void XFileParser::LoadAnimations(ID3DXAnimationController* animController, Scene
         ID3DXKeyframedAnimationSet* pKeyframedSet = nullptr;
         if (SUCCEEDED(pAnimSet->QueryInterface(IID_ID3DXKeyframedAnimationSet, (void**)&pKeyframedSet)))
         {
+            // ================================================================
+            // FIX: Obtener el TicksPerSecond REAL del archivo
+            // ================================================================
+            double sourceTPS = pKeyframedSet->GetSourceTicksPerSecond();
+            if (sourceTPS > 0.0)
+            {
+                clip.ticksPerSecond = sourceTPS;
+            }
+            // Si sourceTPS es 0 o inválido, mantener el default de 4800.0
+
             UINT numAnimations = pKeyframedSet->GetNumAnimations();
 
             // Iterar sobre cada animation (track por hueso)
@@ -615,60 +625,38 @@ void XFileParser::LoadAnimations(ID3DXAnimationController* animController, Scene
                 // ================================================================
                 // EXTRACCIÓN DE KEYFRAMES DE TRASLACIÓN
                 // ================================================================
-                // OPTIMIZADO: Usar map temporal para fusión O(log n) en vez de O(n²)
-                // ================================================================
                 UINT numPosKeys = pKeyframedSet->GetNumTranslationKeys(iAnim);
                 if (numPosKeys > 0)
                 {
                     D3DXKEY_VECTOR3* pPosKeys = new D3DXKEY_VECTOR3[numPosKeys];
                     pKeyframedSet->GetTranslationKeys(iAnim, pPosKeys);
 
-                    // Si no hay keyframes de rotación, crear nuevos keyframes directamente
-                    if (track.keys.empty())
+                    // FIX: Optimización - fusionar usando mapa existente
+                    for (UINT iKey = 0; iKey < numPosKeys; iKey++)
                     {
-                        track.keys.reserve(numPosKeys);  // Pre-reservar memoria
-                        for (UINT iKey = 0; iKey < numPosKeys; iKey++)
+                        double time = pPosKeys[iKey].Time / clip.ticksPerSecond;
+
+                        // Buscar keyframe existente en ese tiempo
+                        bool found = false;
+                        for (auto& existingKey : track.keys)
+                        {
+                            if (fabs(existingKey.time - time) < 0.0001)  // Tolerancia
+                            {
+                                existingKey.translation = pPosKeys[iKey].Value;
+                                found = true;
+                                break;
+                            }
+                        }
+
+                        // Si no existe, crear nuevo
+                        if (!found)
                         {
                             AnimationKey key;
-                            // CORRECCIÓN: Convertir ticks a segundos
-                            key.time = pPosKeys[iKey].Time / clip.ticksPerSecond;
+                            key.time = time;
                             key.translation = pPosKeys[iKey].Value;
                             key.rotation = D3DXQUATERNION(0, 0, 0, 1);
                             key.scale = D3DXVECTOR3(1, 1, 1);
                             track.keys.push_back(key);
-                        }
-                    }
-                    else
-                    {
-                        // Crear mapa temporal para búsqueda rápida O(log n)
-                        map<double, size_t> timeToIndex;
-                        for (size_t i = 0; i < track.keys.size(); i++)
-                        {
-                            timeToIndex[track.keys[i].time] = i;
-                        }
-
-                        // Fusionar con keyframes existentes usando el mapa
-                        for (UINT iKey = 0; iKey < numPosKeys; iKey++)
-                        {
-                            // CORRECCIÓN: Convertir ticks a segundos
-                            double time = pPosKeys[iKey].Time / clip.ticksPerSecond;
-                            auto it = timeToIndex.find(time);
-
-                            if (it != timeToIndex.end())
-                            {
-                                // Actualizar keyframe existente
-                                track.keys[it->second].translation = pPosKeys[iKey].Value;
-                            }
-                            else
-                            {
-                                // Crear nuevo keyframe
-                                AnimationKey key;
-                                key.time = time;
-                                key.translation = pPosKeys[iKey].Value;
-                                key.rotation = D3DXQUATERNION(0, 0, 0, 1);
-                                key.scale = D3DXVECTOR3(1, 1, 1);
-                                track.keys.push_back(key);
-                            }
                         }
                     }
                     delete[] pPosKeys;
@@ -677,60 +665,38 @@ void XFileParser::LoadAnimations(ID3DXAnimationController* animController, Scene
                 // ================================================================
                 // EXTRACCIÓN DE KEYFRAMES DE ESCALA
                 // ================================================================
-                // OPTIMIZADO: Usar map temporal para fusión O(log n) en vez de O(n²)
-                // ================================================================
                 UINT numScaleKeys = pKeyframedSet->GetNumScaleKeys(iAnim);
                 if (numScaleKeys > 0)
                 {
                     D3DXKEY_VECTOR3* pScaleKeys = new D3DXKEY_VECTOR3[numScaleKeys];
                     pKeyframedSet->GetScaleKeys(iAnim, pScaleKeys);
 
-                    // Si no hay keyframes, crear nuevos directamente
-                    if (track.keys.empty())
+                    // FIX: Optimización - fusionar con keyframes existentes
+                    for (UINT iKey = 0; iKey < numScaleKeys; iKey++)
                     {
-                        track.keys.reserve(numScaleKeys);  // Pre-reservar memoria
-                        for (UINT iKey = 0; iKey < numScaleKeys; iKey++)
+                        double time = pScaleKeys[iKey].Time / clip.ticksPerSecond;
+
+                        // Buscar keyframe existente en ese tiempo
+                        bool found = false;
+                        for (auto& existingKey : track.keys)
+                        {
+                            if (fabs(existingKey.time - time) < 0.0001)  // Tolerancia
+                            {
+                                existingKey.scale = pScaleKeys[iKey].Value;
+                                found = true;
+                                break;
+                            }
+                        }
+
+                        // Si no existe, crear nuevo
+                        if (!found)
                         {
                             AnimationKey key;
-                            // CORRECCIÓN: Convertir ticks a segundos
-                            key.time = pScaleKeys[iKey].Time / clip.ticksPerSecond;
+                            key.time = time;
                             key.scale = pScaleKeys[iKey].Value;
                             key.translation = D3DXVECTOR3(0, 0, 0);
                             key.rotation = D3DXQUATERNION(0, 0, 0, 1);
                             track.keys.push_back(key);
-                        }
-                    }
-                    else
-                    {
-                        // Crear mapa temporal para búsqueda rápida O(log n)
-                        map<double, size_t> timeToIndex;
-                        for (size_t i = 0; i < track.keys.size(); i++)
-                        {
-                            timeToIndex[track.keys[i].time] = i;
-                        }
-
-                        // Fusionar con keyframes existentes usando el mapa
-                        for (UINT iKey = 0; iKey < numScaleKeys; iKey++)
-                        {
-                            // CORRECCIÓN: Convertir ticks a segundos
-                            double time = pScaleKeys[iKey].Time / clip.ticksPerSecond;
-                            auto it = timeToIndex.find(time);
-
-                            if (it != timeToIndex.end())
-                            {
-                                // Actualizar keyframe existente
-                                track.keys[it->second].scale = pScaleKeys[iKey].Value;
-                            }
-                            else
-                            {
-                                // Crear nuevo keyframe
-                                AnimationKey key;
-                                key.time = time;
-                                key.scale = pScaleKeys[iKey].Value;
-                                key.translation = D3DXVECTOR3(0, 0, 0);
-                                key.rotation = D3DXQUATERNION(0, 0, 0, 1);
-                                track.keys.push_back(key);
-                            }
                         }
                     }
                     delete[] pScaleKeys;

@@ -395,20 +395,13 @@ void FBXExporter::ExportGeometry(MeshData* meshData, FbxMesh* fbxMesh)
     {
         fbxMesh->BeginPolygon(-1, -1, false);
 
-        // DirectX usa winding order clockwise, FBX usa counter-clockwise
-        // Invertir orden de vértices si estamos convirtiendo a RH
-        if (m_Options.targetCoordSystem == CoordinateSystem::RIGHT_HANDED)
-        {
-            fbxMesh->AddPolygon(meshData->indices[i * 3 + 0]);
-            fbxMesh->AddPolygon(meshData->indices[i * 3 + 2]);  // Invertir
-            fbxMesh->AddPolygon(meshData->indices[i * 3 + 1]);  // Invertir
-        }
-        else
-        {
-            fbxMesh->AddPolygon(meshData->indices[i * 3 + 0]);
-            fbxMesh->AddPolygon(meshData->indices[i * 3 + 1]);
-            fbxMesh->AddPolygon(meshData->indices[i * 3 + 2]);
-        }
+        // FIX: NO invertir winding order manualmente
+        // Al convertir posiciones de LH a RH (invertir Z), el winding order
+        // ya se invierte automáticamente. Invertir manualmente causa doble inversión.
+        // Resultado: mantener el orden original de índices
+        fbxMesh->AddPolygon(meshData->indices[i * 3 + 0]);
+        fbxMesh->AddPolygon(meshData->indices[i * 3 + 1]);
+        fbxMesh->AddPolygon(meshData->indices[i * 3 + 2]);
 
         fbxMesh->EndPolygon();
     }
